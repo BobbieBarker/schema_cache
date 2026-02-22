@@ -69,6 +69,8 @@ defmodule SchemaCache.Test.RedisAdapter do
   end
 
   @impl true
+  def mget([]), do: {:ok, []}
+
   def mget(keys) do
     case Redix.command(redis_conn(), ["MGET" | keys]) do
       {:ok, values} ->
