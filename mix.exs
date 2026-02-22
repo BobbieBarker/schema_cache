@@ -18,8 +18,8 @@ defmodule SchemaCache.MixProject do
       name: "SchemaCache",
       source_url: @source_url,
       description:
-        "An Ecto-aware caching library implementing Read Through, Write Through, and Schema Mutation Key Eviction Strategy (SMKES).",
-      dialyzer: [plt_add_apps: [:ecto, :ex_unit]],
+        "An Ecto-aware caching library providing cache-aside and write-through abstractions with automatic invalidation.",
+      dialyzer: [plt_add_apps: [:ecto, :ex_unit], ignore_warnings: ".dialyzer_ignore.exs"],
       test_coverage: [tool: ExCoveralls]
     ]
   end
@@ -56,7 +56,8 @@ defmodule SchemaCache.MixProject do
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
       {:excoveralls, "~> 0.18", only: :test},
-      {:redix, "~> 1.5", only: :test}
+      {:redix, "~> 1.5", only: :test},
+      {:elixir_cache, "~> 0.3", only: :test}
     ]
   end
 
@@ -79,12 +80,31 @@ defmodule SchemaCache.MixProject do
       main: "readme",
       source_ref: "v#{@version}",
       source_url: @source_url,
-      extras: ["README.md"],
+      extras: [
+        "README.md",
+        "guides/introduction.md",
+        "guides/tutorials/installation.md",
+        "guides/tutorials/basic_operations.md",
+        "guides/how-to/writing_adapters.md",
+        "guides/how-to/using_with_elixir_cache.md",
+        "guides/explanation/architecture.md",
+        "LICENSE"
+      ],
+      groups_for_extras: [
+        "Getting Started": ["guides/introduction.md"],
+        Tutorials: [~r{guides/tutorials/.?}],
+        "How-to Guides": [~r{guides/how-to/.?}],
+        Explanation: [~r{guides/explanation/.?}]
+      ],
       groups_for_modules: [
-        Core: [SchemaCache],
+        Core: [SchemaCache, SchemaCache.Supervisor],
         "Adapter Behaviour": [SchemaCache.Adapter],
         "Built-in Adapters": [SchemaCache.Adapters.ETS],
-        Internals: [SchemaCache.KeyGenerator]
+        Internals: [
+          SchemaCache.KeyGenerator,
+          SchemaCache.KeyRegistry,
+          SchemaCache.SetLock
+        ]
       ]
     ]
   end

@@ -52,7 +52,7 @@ defmodule SchemaCache.Adapters.RedisAdapterSetOpsTest do
 
       assert {:ok, members} = RedisAdapter.smembers("my_set")
       assert is_list(members)
-      assert length(members) == 3
+      assert 3 = length(members)
       assert Enum.sort(members) == [1, 2, 3]
     end
 

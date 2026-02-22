@@ -3,15 +3,10 @@ defmodule SchemaCache.SupervisorTest do
 
   use ExUnit.Case, async: false
 
-  @ets_tables [
-    :schema_cache_ets,
-    :schema_cache_ets_sets,
-    :schema_cache_key_to_id,
-    :schema_cache_id_to_key
-  ]
+  alias SchemaCache.Adapters.ETS
 
   setup do
-    for table <- @ets_tables do
+    for table <- ETS.managed_tables() do
       if :ets.whereis(table) != :undefined do
         :ets.delete_all_objects(table)
       end
@@ -22,13 +17,16 @@ defmodule SchemaCache.SupervisorTest do
 
   describe "start_link/1" do
     test "adapter is set in persistent_term after startup" do
-      assert SchemaCache.Adapters.ETS = :persistent_term.get(:schema_cache_adapter)
+      assert ETS = :persistent_term.get(:schema_cache_adapter)
     end
 
     test "adapter capabilities are set with correct flags for ETS adapter" do
-      caps = :persistent_term.get(:schema_cache_adapter_caps)
-
-      assert %{sadd: true, srem: true, smembers: true, mget: true} = caps
+      assert %{
+               native_sadd: true,
+               native_srem: true,
+               native_smembers: true,
+               native_mget: true
+             } = :persistent_term.get(:schema_cache_adapter_caps)
     end
 
     test "KeyRegistry ETS tables exist after startup" do
@@ -38,6 +36,19 @@ defmodule SchemaCache.SupervisorTest do
 
     test "SetLock.Registry is running" do
       assert Process.whereis(SchemaCache.SetLock.Registry) != nil
+    end
+
+    test "raises ArgumentError when adapter is not provided" do
+      assert_raise ArgumentError, ~r/adapter not configured/, fn ->
+        SchemaCache.Supervisor.init([])
+      end
+    end
+
+    test "capabilities include elixir_cache flags" do
+      assert %{
+               elixir_cache: false,
+               redis_backed: false
+             } = :persistent_term.get(:schema_cache_adapter_caps)
     end
   end
 end

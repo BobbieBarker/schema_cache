@@ -2,12 +2,30 @@ defmodule SchemaCache.Adapter do
   @moduledoc """
   Behaviour for cache adapter implementations.
 
-  SchemaCache is adapter-agnostic. Implement this behaviour to plug in
-  any caching backend: Nebulex, ConCache, Cachex, Redis, ETS, etc.
+  SchemaCache is adapter-agnostic. Any module implementing this behaviour
+  can serve as the cache backend: Nebulex, ConCache, Cachex, Redis, ETS, etc.
 
-  The behaviour requires three core operations: `get/1`, `put/3`, and
-  `delete/1`. SchemaCache builds its key reference tracking (SMKES) on
-  top of these primitives.
+  ## ElixirCache Integration
+
+  Modules created with `use Cache` from
+  [ElixirCache](https://github.com/MikaAK/elixir_cache) are detected
+  automatically and work without a wrapper module. Just pass the module
+  directly:
+
+      children = [
+        MyApp.Cache,
+        {SchemaCache.Supervisor, adapter: MyApp.Cache}
+      ]
+
+  For Redis-backed ElixirCache modules, SchemaCache also auto-detects
+  native set operations via `command/1`, giving you full SMKES performance
+  with zero configuration.
+
+  ## Custom Adapters
+
+  Implement three required callbacks: `get/1`, `put/3`, and `delete/1`.
+  SchemaCache builds its key reference tracking (SMKES) on top of these
+  primitives.
 
   Adapters can optionally implement `init/0`, `sadd/2`, `srem/2`,
   `smembers/1`, and `mget/1`. `init/0` is called by
@@ -32,12 +50,6 @@ defmodule SchemaCache.Adapter do
   If your backend supports TTL, extract it with `Keyword.get(opts, :ttl)`
   and use it. If not, ignore it. SchemaCache does not implement its own
   TTL mechanism.
-
-  ## Configuration
-
-  Set the adapter in your application config:
-
-      config :schema_cache, adapter: MyApp.SchemaCacheAdapter
 
   ## Example: Nebulex Adapter
 
@@ -149,58 +161,135 @@ defmodule SchemaCache.Adapter do
 
   @doc false
   def init(adapter) do
-    if function_exported?(adapter, :init, 0) do
-      adapter.init()
-    else
-      :ok
-    end
+    if function_exported?(adapter, :init, 0),
+      do: adapter.init(),
+      else: :ok
   end
 
   @doc false
   def resolve_capabilities(adapter) do
+    Code.ensure_loaded(adapter)
+    elixir_cache? = elixir_cache?(adapter)
+    redis_backed? = elixir_cache? and detect_redis(adapter)
+
     :persistent_term.put(:schema_cache_adapter_caps, %{
-      sadd: function_exported?(adapter, :sadd, 2),
-      srem: function_exported?(adapter, :srem, 2),
-      smembers: function_exported?(adapter, :smembers, 1),
-      mget: function_exported?(adapter, :mget, 1)
+      # ElixirCache modules export sadd/2 etc. with incompatible signatures
+      # (key prefixing, TermEncoder encoding, different return values).
+      # Only mark as native for non-ElixirCache adapters.
+      native_sadd: not elixir_cache? and function_exported?(adapter, :sadd, 2),
+      native_srem: not elixir_cache? and function_exported?(adapter, :srem, 2),
+      native_smembers: not elixir_cache? and function_exported?(adapter, :smembers, 1),
+      native_mget: not elixir_cache? and function_exported?(adapter, :mget, 1),
+      elixir_cache: elixir_cache?,
+      redis_backed: redis_backed?
     })
   end
 
-  # --- Runtime dispatch ---
+  defp elixir_cache?(adapter) do
+    with true <- function_exported?(adapter, :cache_adapter, 0),
+         mod = adapter.cache_adapter(),
+         {:module, ^mod} <- Code.ensure_loaded(mod) do
+      Cache in (mod.__info__(:attributes)[:behaviour] || [])
+    else
+      _ -> false
+    end
+  rescue
+    _ -> false
+  end
+
+  defp detect_redis(adapter) do
+    function_exported?(adapter, :command, 1) and
+      adapter.cache_adapter() == Cache.Redis
+  rescue
+    _ -> false
+  end
+
+  # --- Runtime dispatch: core operations ---
+
+  @doc false
+  def get(adapter, key), do: adapter.get(key)
+
+  @doc false
+  def put(adapter, key, value, ttl) do
+    if capability(:elixir_cache),
+      do: elixir_cache_put(adapter, key, value, ttl),
+      else: adapter.put(key, value, ttl: ttl)
+  end
+
+  @doc false
+  def put_no_ttl(adapter, key, value) do
+    if capability(:elixir_cache),
+      do: adapter.put(key, value),
+      else: adapter.put(key, value, [])
+  end
+
+  @doc false
+  def delete(adapter, key), do: adapter.delete(key)
+
+  defp elixir_cache_put(adapter, key, value, nil), do: adapter.put(key, value)
+  defp elixir_cache_put(adapter, key, value, ttl), do: adapter.put(key, ttl, value)
+
+  # --- Runtime dispatch: set operations ---
 
   @doc false
   def sadd(adapter, key, member) do
-    if capability(:sadd) do
-      adapter.sadd(key, member)
-    else
-      SchemaCache.SetLock.sadd(key, member, adapter)
+    cond do
+      capability(:native_sadd) -> adapter.sadd(key, member)
+      capability(:redis_backed) -> redis_sadd(adapter, key, member)
+      true -> SchemaCache.SetLock.sadd(key, member, adapter)
     end
   end
 
   @doc false
   def srem(adapter, key, member) do
-    if capability(:srem) do
-      adapter.srem(key, member)
-    else
-      SchemaCache.SetLock.srem(key, member, adapter)
+    cond do
+      capability(:native_srem) -> adapter.srem(key, member)
+      capability(:redis_backed) -> redis_srem(adapter, key, member)
+      true -> SchemaCache.SetLock.srem(key, member, adapter)
     end
   end
 
   @doc false
   def smembers(adapter, key) do
-    if capability(:smembers) do
-      adapter.smembers(key)
-    else
-      SchemaCache.SetLock.smembers(key, adapter)
+    cond do
+      capability(:native_smembers) -> adapter.smembers(key)
+      capability(:redis_backed) -> redis_smembers(adapter, key)
+      true -> SchemaCache.SetLock.smembers(key, adapter)
     end
   end
 
   @doc false
   def mget(adapter, keys) do
-    if capability(:mget) do
-      adapter.mget(keys)
-    else
-      SchemaCache.SetLock.mget(keys, adapter)
+    # No redis_backed path. ElixirCache's key prefixing and TermEncoder
+    # encoding make raw MGET via command/1 unreliable. SetLock uses
+    # individual adapter.get/1 calls which handle both correctly.
+    if capability(:native_mget),
+      do: adapter.mget(keys),
+      else: SchemaCache.SetLock.mget(keys, adapter)
+  end
+
+  # --- ElixirCache Redis command helpers ---
+
+  defp redis_sadd(adapter, key, member) do
+    with {:ok, _} <- adapter.command(["SADD", key, to_string(member)]), do: :ok
+  end
+
+  defp redis_srem(adapter, key, member) do
+    with {:ok, _} <- adapter.command(["SREM", key, to_string(member)]), do: :ok
+  end
+
+  defp redis_smembers(adapter, key) do
+    case adapter.command(["SMEMBERS", key]) do
+      {:ok, []} ->
+        {:ok, nil}
+
+      {:ok, members} ->
+        members
+        |> Enum.map(&String.to_integer/1)
+        |> then(&{:ok, &1})
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 

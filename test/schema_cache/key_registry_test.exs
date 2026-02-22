@@ -17,13 +17,13 @@ defmodule SchemaCache.KeyRegistryTest do
     test "returns the same ID for the same key" do
       id1 = KeyRegistry.register("find_user:{\"id\":1}")
       id2 = KeyRegistry.register("find_user:{\"id\":1}")
-      assert id1 == id2
+      assert ^id1 = id2
     end
 
     test "returns different IDs for different keys" do
       id1 = KeyRegistry.register("find_user:{\"id\":1}")
       id2 = KeyRegistry.register("find_user:{\"id\":2}")
-      assert id1 != id2
+      refute id1 == id2
     end
 
     test "handles concurrent registrations of the same key" do
@@ -34,7 +34,7 @@ defmodule SchemaCache.KeyRegistryTest do
 
       ids = Task.await_many(tasks)
       # All should get the same ID
-      assert Enum.uniq(ids) |> length() == 1
+      assert 1 = ids |> Enum.uniq() |> length()
     end
 
     test "handles concurrent registrations of different keys" do
@@ -45,7 +45,7 @@ defmodule SchemaCache.KeyRegistryTest do
 
       ids = Task.await_many(tasks)
       # All should be unique
-      assert Enum.uniq(ids) |> length() == 100
+      assert 100 = ids |> Enum.uniq() |> length()
     end
   end
 
@@ -75,7 +75,7 @@ defmodule SchemaCache.KeyRegistryTest do
     test "filters out stale/unregistered IDs" do
       id1 = KeyRegistry.register("key_a")
       result = KeyRegistry.resolve([id1, 999_999_999])
-      assert length(result) == 1
+      assert 1 = length(result)
       assert {id1, "key_a"} in result
     end
   end

@@ -1,40 +1,37 @@
 defmodule SchemaCache do
   @moduledoc """
-  An Ecto-aware caching library implementing Read Through, Write Through,
-  and Schema Mutation Key Eviction Strategy (SMKES).
+  An Ecto-aware caching library providing cache-aside and write-through
+  abstractions with automatic invalidation.
 
-  ## Schema Mutation Key Eviction Strategy (SMKES)
+  ## How Invalidation Works
 
-  SMKES is the core value of this library. It maintains a reverse index
-  from your Ecto schemas to every cache key where they appear. When a
-  schema is mutated (created, updated, or deleted), SchemaCache knows
-  exactly which cached values are affected and evicts or updates them
-  automatically, requiring no manual cache invalidation.
-
-  SMKES works by storing cache key references in sets, keyed by schema
-  identity. When a query result is cached via `read/4`, SchemaCache
-  records which schemas appear in that result. On mutation, it looks up
-  all cache keys referencing the mutated schema and takes action:
+  SchemaCache maintains a reverse index from Ecto schemas to cache keys
+  (SMKES). When a query result is cached via `read/4`, it records which
+  schemas appear in that result. On mutation, it looks up all cache keys
+  referencing the mutated schema and takes action:
 
     * **`create/1`**: evicts every cached collection for the schema
       type, so the next read includes the new record.
     * **`update/2`** with `:evict` (default): deletes every cached
       entry referencing the mutated schema instance.
     * **`update/2`** with `:write_through`: updates every cached entry
-      in place with the new schema value, avoiding cache misses entirely.
+      in place with the new schema value. Use when your application
+      can't serve stale results.
     * **`delete/1`**: deletes every cached entry referencing the
       deleted schema instance.
 
   ## Adapter
 
-  SchemaCache is adapter-agnostic. Configure your cache backend:
+  SchemaCache is adapter-agnostic. Pass your adapter to the supervisor:
 
-      config :schema_cache, adapter: SchemaCache.Adapters.ETS
+      children = [
+        {SchemaCache.Supervisor, adapter: SchemaCache.Adapters.ETS}
+      ]
 
-  Any module implementing `SchemaCache.Adapter` can be used. This makes
-  it easy to integrate with Nebulex, ConCache, Cachex, or any other
-  caching library. See `SchemaCache.Adapter` for the behaviour
-  specification and an example implementation.
+  Any module implementing `SchemaCache.Adapter` can be used. Modules
+  built with [ElixirCache](https://github.com/MikaAK/elixir_cache)
+  (`use Cache`) are detected automatically and work without a wrapper.
+  See `SchemaCache.Adapter` for details.
 
   ## TTL
 
@@ -42,9 +39,10 @@ defmodule SchemaCache do
   it will be used. If not, it is ignored. SchemaCache does not implement
   its own TTL mechanism.
 
-  ## Read Through
+  ## Cache-Aside
 
-  The cache is responsible for fetching data from the source on a miss:
+  On a cache miss, SchemaCache calls your function to fetch from the
+  source and caches the result:
 
       SchemaCache.read("find_user", %{id: 5}, :timer.minutes(15), fn ->
         MyApp.Users.find(%{id: 5})
@@ -54,9 +52,10 @@ defmodule SchemaCache do
   callback. On a miss, the callback is invoked, the result is cached,
   and schema key references are recorded for SMKES.
 
-  ## Write Through
+  ## Write-Through
 
-  Updates go through the cache, which updates cached values in place:
+  When your application can't serve stale results, write-through
+  updates cached values in place after mutations:
 
       SchemaCache.update(
         fn -> MyApp.Users.update_user(user, params) end,
@@ -90,11 +89,10 @@ defmodule SchemaCache do
   defp set_key(key), do: "__set:#{key}"
 
   defp adapter do
-    with nil <- :persistent_term.get(:schema_cache_adapter, nil),
-         nil <- Application.get_env(:schema_cache, :adapter) do
+    with nil <- :persistent_term.get(:schema_cache_adapter, nil) do
       raise """
       SchemaCache adapter not configured.
-      Set config :schema_cache, adapter: YourAdapter
+      Start SchemaCache.Supervisor with adapter: YourAdapter
       """
     end
   end
@@ -287,7 +285,7 @@ defmodule SchemaCache do
          ttl,
          %_{} = value
        ) do
-    case adapter().get(key_ref) do
+    case Adapter.get(adapter(), key_ref) do
       {:ok, nil} ->
         :ok
 
@@ -300,7 +298,7 @@ defmodule SchemaCache do
   end
 
   defp update_key_ref(key_ref, ttl, value) do
-    adapter().put(key_ref, value, ttl: ttl)
+    Adapter.put(adapter(), key_ref, value, ttl)
   end
 
   defp maybe_update_cached_collection(
@@ -327,7 +325,7 @@ defmodule SchemaCache do
       idx ->
         cached_collection
         |> List.replace_at(idx, value)
-        |> then(&adapter().put(key_ref, &1, ttl: ttl))
+        |> then(&Adapter.put(adapter(), key_ref, &1, ttl))
     end
   end
 
@@ -391,7 +389,7 @@ defmodule SchemaCache do
   def read(key, params, ttl \\ nil, fnc) do
     cache_key = KeyGenerator.cache_key(key, params)
 
-    case adapter().get(cache_key) do
+    case Adapter.get(adapter(), cache_key) do
       {:ok, nil} ->
         get_set_value(cache_key, ttl, fnc)
 
@@ -409,7 +407,7 @@ defmodule SchemaCache do
   defp get_set_value(cache_key, ttl, fnc) do
     case fnc.() do
       {:ok, value} ->
-        adapter().put(cache_key, value, ttl: ttl)
+        Adapter.put(adapter(), cache_key, value, ttl)
         associate_key_reference_with_schema(cache_key, value)
         {:ok, value}
 
@@ -417,7 +415,7 @@ defmodule SchemaCache do
         []
 
       value when is_list(value) ->
-        adapter().put(cache_key, value, ttl: ttl)
+        Adapter.put(adapter(), cache_key, value, ttl)
         associate_key_reference_with_schema(cache_key, value)
         associate_key_reference_with_schema_type(cache_key, value)
         value
@@ -508,7 +506,7 @@ defmodule SchemaCache do
         end)
 
         maybe_async_each(live, fn {{id, key_ref}, _} ->
-          a.delete(key_ref)
+          Adapter.delete(a, key_ref)
           Adapter.srem(a, set_k, id)
           KeyRegistry.unregister_id(id)
         end)

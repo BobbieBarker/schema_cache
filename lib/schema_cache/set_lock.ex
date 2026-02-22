@@ -8,7 +8,7 @@ defmodule SchemaCache.SetLock do
   `Registry` as a lock pool, storing sets as `MapSet` values in the
   adapter's key-value store.
 
-  The lock is partitioned by `System.schedulers_online/0` to reduce
+  The lock is partitioned by `System.schedulers_online() * 4` to reduce
   contention. Concurrent writes to different set keys rarely contend,
   while writes to the same key are serialized by hashing to the same
   partition.
@@ -34,11 +34,11 @@ defmodule SchemaCache.SetLock do
     case Registry.register(@registry, lock_key, nil) do
       {:ok, _} ->
         try do
-          set_key
-          |> adapter.get()
+          adapter
+          |> SchemaCache.Adapter.get(set_key)
           |> current_set()
           |> update_fn.()
-          |> then(&adapter.put(set_key, &1, []))
+          |> then(&SchemaCache.Adapter.put_no_ttl(adapter, set_key, &1))
 
           :ok
         after
@@ -66,8 +66,8 @@ defmodule SchemaCache.SetLock do
 
   @spec smembers(String.t(), module()) :: {:ok, list() | nil} | {:error, any()}
   def smembers(set_key, adapter) do
-    set_key
-    |> adapter.get()
+    adapter
+    |> SchemaCache.Adapter.get(set_key)
     |> format_smembers_result()
   end
 
@@ -87,7 +87,7 @@ defmodule SchemaCache.SetLock do
   def mget(keys, adapter) do
     keys
     |> Enum.map(fn key ->
-      case adapter.get(key) do
+      case SchemaCache.Adapter.get(adapter, key) do
         {:ok, value} -> value
         _ -> nil
       end

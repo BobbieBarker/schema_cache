@@ -5,15 +5,8 @@ defmodule SchemaCache.Adapters.ETSSetOpsTest do
 
   alias SchemaCache.Adapters.ETS
 
-  @ets_tables [
-    :schema_cache_ets,
-    :schema_cache_ets_sets,
-    :schema_cache_key_to_id,
-    :schema_cache_id_to_key
-  ]
-
   setup do
-    for table <- @ets_tables do
+    for table <- ETS.managed_tables() do
       if :ets.whereis(table) != :undefined do
         :ets.delete_all_objects(table)
       end
@@ -71,7 +64,7 @@ defmodule SchemaCache.Adapters.ETSSetOpsTest do
 
       assert {:ok, members} = ETS.smembers("my_set")
       assert is_list(members)
-      assert length(members) == 3
+      assert 3 = length(members)
       assert Enum.sort(members) == ["a", "b", "c"]
     end
 
