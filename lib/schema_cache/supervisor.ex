@@ -1,5 +1,26 @@
 defmodule SchemaCache.Supervisor do
-  @moduledoc false
+  @moduledoc """
+  Supervisor for the SchemaCache system.
+
+  Add this to your application's supervision tree to initialize the cache
+  adapter, resolve adapter capabilities, and start internal processes.
+
+  ## Usage
+
+      children = [
+        {SchemaCache.Supervisor, adapter: SchemaCache.Adapters.ETS},
+        # ... other children
+      ]
+
+  Any module implementing `SchemaCache.Adapter` works, as well as any
+  ElixirCache module (detected automatically):
+
+      children = [
+        MyApp.Cache,
+        {SchemaCache.Supervisor, adapter: MyApp.Cache}
+      ]
+
+  """
 
   use Supervisor
 
@@ -12,10 +33,12 @@ defmodule SchemaCache.Supervisor do
   @impl true
   def init(opts) do
     adapter =
-      with nil <- Keyword.get(opts, :adapter),
-           nil <- Application.get_env(:schema_cache, :adapter) do
-        raise "SchemaCache adapter not configured. Set config :schema_cache, adapter: YourAdapter"
-      end
+      Keyword.get(opts, :adapter) ||
+        raise ArgumentError,
+              """
+              SchemaCache adapter not configured.
+              Pass adapter: YourAdapter to SchemaCache.Supervisor
+              """
 
     :persistent_term.put(:schema_cache_adapter, adapter)
 

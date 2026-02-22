@@ -28,15 +28,32 @@ defmodule SchemaCache.Adapters.ETS do
     * Single-node only, not shared across a cluster
     * No memory limits; the table grows without bound
 
-  ## Configuration
+  ## Usage
 
-      config :schema_cache, adapter: SchemaCache.Adapters.ETS
+      children = [
+        {SchemaCache.Supervisor, adapter: SchemaCache.Adapters.ETS}
+      ]
   """
 
   @behaviour SchemaCache.Adapter
 
   @data_table :schema_cache_ets
   @set_table :schema_cache_ets_sets
+
+  @doc """
+  Returns the list of ETS tables managed by this adapter and SchemaCache internals.
+
+  Useful for test cleanup. Call this instead of hardcoding table names.
+  """
+  @spec managed_tables() :: [atom()]
+  def managed_tables do
+    [
+      @data_table,
+      @set_table,
+      :schema_cache_key_to_id,
+      :schema_cache_id_to_key
+    ]
+  end
 
   @impl true
   def init do

@@ -4,14 +4,8 @@ defmodule SchemaCache.Test.DataCase do
   use ExUnit.CaseTemplate
 
   alias Ecto.Adapters.SQL.Sandbox
+  alias SchemaCache.Adapters.ETS
   alias SchemaCache.Test.Repo
-
-  @ets_tables [
-    :schema_cache_ets,
-    :schema_cache_ets_sets,
-    :schema_cache_key_to_id,
-    :schema_cache_id_to_key
-  ]
 
   using do
     quote do
@@ -27,7 +21,7 @@ defmodule SchemaCache.Test.DataCase do
       Sandbox.mode(Repo, {:shared, self()})
     end
 
-    for table <- @ets_tables do
+    for table <- ETS.managed_tables() do
       if :ets.whereis(table) != :undefined do
         :ets.delete_all_objects(table)
       end

@@ -4,13 +4,7 @@ defmodule SchemaCache.Test.RedisCase do
   use ExUnit.CaseTemplate
 
   alias SchemaCache.Adapter
-
-  @ets_tables [
-    :schema_cache_ets,
-    :schema_cache_ets_sets,
-    :schema_cache_key_to_id,
-    :schema_cache_id_to_key
-  ]
+  alias SchemaCache.Adapters.ETS
 
   setup do
     redis_url = Application.get_env(:schema_cache, :redis_url, "redis://localhost:6379")
@@ -19,7 +13,7 @@ defmodule SchemaCache.Test.RedisCase do
       {:ok, conn} ->
         {:ok, "OK"} = Redix.command(conn, ["FLUSHDB"])
 
-        for table <- @ets_tables do
+        for table <- ETS.managed_tables() do
           if :ets.whereis(table) != :undefined do
             :ets.delete_all_objects(table)
           end

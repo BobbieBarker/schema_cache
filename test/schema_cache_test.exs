@@ -10,21 +10,13 @@ defmodule SchemaCacheTest do
   alias SchemaCache.KeyRegistry
   alias SchemaCache.Test.FakeSchema
 
-  @ets_tables [
-    :schema_cache_ets,
-    :schema_cache_ets_sets,
-    :schema_cache_key_to_id,
-    :schema_cache_id_to_key
-  ]
-
   setup do
-    for table <- @ets_tables do
+    for table <- ETS.managed_tables() do
       if :ets.whereis(table) != :undefined do
         :ets.delete_all_objects(table)
       end
     end
 
-    Application.put_env(:schema_cache, :adapter, SchemaCache.Adapters.ETS)
     :ok
   end
 
@@ -77,7 +69,7 @@ defmodule SchemaCacheTest do
       assert [] = SchemaCache.read("all_users", %{}, nil, fetch)
 
       # Function was called twice (not cached)
-      assert :counters.get(call_count, 1) == 2
+      assert 2 = :counters.get(call_count, 1)
     end
 
     test "passes through error results without caching" do
@@ -168,12 +160,12 @@ defmodule SchemaCacheTest do
                }
              } = SchemaCache.read("find_user", %{id: user.id}, nil, fetch)
 
-      assert :counters.get(call_count, 1) == 1
+      assert 1 = :counters.get(call_count, 1)
 
       assert {:ok, %{id: ^user_id}} =
                SchemaCache.read("find_user", %{id: user.id}, nil, fetch)
 
-      assert :counters.get(call_count, 1) == 1
+      assert 1 = :counters.get(call_count, 1)
     end
 
     test "caches Repo.all collection, second call serves from cache" do
@@ -187,13 +179,13 @@ defmodule SchemaCacheTest do
       end
 
       assert [_, _] = SchemaCache.read("all_users", %{}, nil, fetch)
-      assert :counters.get(call_count, 1) == 1
+      assert 1 = :counters.get(call_count, 1)
 
       result = SchemaCache.read("all_users", %{}, nil, fetch)
       ids = Enum.map(result, & &1.id)
       assert user1.id in ids
       assert user2.id in ids
-      assert :counters.get(call_count, 1) == 1
+      assert 1 = :counters.get(call_count, 1)
     end
 
     test "concurrent cache misses preserve all key references" do
@@ -212,7 +204,7 @@ defmodule SchemaCacheTest do
       schema_key = KeyGenerator.schema_cache_key(user)
       {:ok, refs} = adapter.smembers("__set:#{schema_key}")
 
-      assert length(refs) == 20
+      assert 20 = length(refs)
     end
 
     test "concurrent reads for different schemas build correct key references" do
@@ -256,7 +248,7 @@ defmodule SchemaCacheTest do
           end
 
       results = Task.await_many(tasks)
-      assert length(results) == 15
+      assert 15 = length(results)
 
       for i <- 1..10 do
         cache_key = KeyGenerator.cache_key("find_user", %{id: i})
@@ -282,7 +274,7 @@ defmodule SchemaCacheTest do
           end
 
       results = Task.await_many(tasks)
-      assert length(results) == 25
+      assert 25 = length(results)
     end
 
     test "concurrent reads and write_through updates don't corrupt state" do
@@ -303,7 +295,7 @@ defmodule SchemaCacheTest do
           end
 
       results = Task.await_many(tasks)
-      assert length(results) == 25
+      assert 25 = length(results)
     end
   end
 
@@ -365,7 +357,7 @@ defmodule SchemaCacheTest do
       ids = Enum.map(result, & &1.id)
       assert user1.id in ids
       assert user2.id in ids
-      assert :counters.get(call_count, 1) == 1
+      assert 1 = :counters.get(call_count, 1)
     end
 
     test "concurrent creates evict collection caches" do
@@ -485,7 +477,7 @@ defmodule SchemaCacheTest do
                  {:ok, Repo.get(User, user.id)}
                end)
 
-      assert :counters.get(call_count, 1) == 1
+      assert 1 = :counters.get(call_count, 1)
     end
 
     test "write_through singular updates cache in place without re-fetching" do
@@ -514,7 +506,7 @@ defmodule SchemaCacheTest do
                  {:ok, Repo.get(User, user.id)}
                end)
 
-      assert :counters.get(call_count, 1) == 0
+      assert 0 = :counters.get(call_count, 1)
     end
 
     test "write_through collection updates cache in place" do
@@ -540,7 +532,7 @@ defmodule SchemaCacheTest do
                  Repo.all(User)
                end)
 
-      assert :counters.get(call_count, 1) == 0
+      assert 0 = :counters.get(call_count, 1)
     end
 
     test "concurrent updates don't lose evictions" do
@@ -614,7 +606,7 @@ defmodule SchemaCacheTest do
                  {:ok, Repo.get(User, user.id)}
                end)
 
-      assert :counters.get(call_count, 1) == 1
+      assert 1 = :counters.get(call_count, 1)
     end
 
     test "concurrent deletes evict all referenced keys" do
@@ -776,10 +768,12 @@ defmodule SchemaCacheTest do
       :persistent_term.put(:schema_cache_adapter, SchemaCache.Test.FailMgetAdapter)
 
       :persistent_term.put(:schema_cache_adapter_caps, %{
-        sadd: true,
-        srem: true,
-        smembers: true,
-        mget: true
+        native_sadd: true,
+        native_srem: true,
+        native_smembers: true,
+        native_mget: true,
+        elixir_cache: false,
+        redis_backed: false
       })
 
       try do
@@ -820,7 +814,7 @@ defmodule SchemaCacheTest do
         Repo.all(User)
       end)
 
-      assert :counters.get(call_count, 1) == 2
+      assert 2 = :counters.get(call_count, 1)
     end
   end
 

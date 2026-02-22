@@ -5,13 +5,12 @@
 [![CI](https://github.com/BobbieBarker/schema_cache/actions/workflows/ci.yml/badge.svg)](https://github.com/BobbieBarker/schema_cache/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/BobbieBarker/schema_cache/branch/main/graph/badge.svg)](https://codecov.io/gh/BobbieBarker/schema_cache)
 
-An Ecto-aware caching library implementing **Read Through**, **Write Through**,
-and **Schema Mutation Key Eviction Strategy (SMKES)**.
+An Ecto-aware caching library providing **cache-aside** and **write-through**
+abstractions with automatic invalidation.
 
 SchemaCache understands the relationship between your Ecto schemas and cached
 query results. When a schema is mutated, it knows exactly which cached values
-are affected and can evict or update them automatically, requiring no manual
-cache invalidation.
+are affected and can evict or update them automatically.
 
 ## Installation
 
@@ -23,13 +22,6 @@ def deps do
     {:schema_cache, "~> 0.1.0"}
   ]
 end
-```
-
-Then configure your cache adapter:
-
-```elixir
-# config/config.exs
-config :schema_cache, adapter: SchemaCache.Adapters.ETS
 ```
 
 Add `SchemaCache.Supervisor` to your application supervision tree:
@@ -46,7 +38,7 @@ children = [
 SchemaCache provides four core operations: **read**, **create**, **update**,
 and **delete**.
 
-### Read Through
+### Cache-Aside
 
 On a cache miss, SchemaCache invokes your callback to fetch from the source,
 caches the result, and records which schemas appear in it for later eviction.
@@ -59,9 +51,9 @@ caches the result, and records which schemas appear in it for later eviction.
   end)
 
 # Cache a collection (prefix with "all_" for write-through support)
-users =
+{:ok, users} =
   SchemaCache.read("all_active_users", %{active: true}, :timer.minutes(5), fn ->
-    MyApp.Users.all(%{active: true})
+    {:ok, MyApp.Users.all(%{active: true})}
   end)
 ```
 
@@ -91,10 +83,10 @@ instance. The next read will fetch fresh data from the source.
   end)
 ```
 
-### Update with Write Through
+### Update with Write-Through
 
 Update all cached values referencing the schema in place, avoiding cache misses
-entirely. Ideal for updates where you want zero-latency reads after the write.
+entirely. Use when your application can't serve stale results after a write.
 
 ```elixir
 {:ok, updated_user} =
@@ -114,220 +106,98 @@ instance.
   SchemaCache.delete(fn -> Repo.delete(user) end)
 ```
 
-## How SMKES Works
+## How It Works
 
-Schema Mutation Key Eviction Strategy (SMKES) is the core innovation of this
-library. It maintains a reverse index from Ecto schemas to every cache key
-where they appear. When a schema is mutated, SchemaCache looks up the reverse
-index and takes action on every affected cache entry.
+SchemaCache maintains a reverse index from Ecto schemas to cache keys (SMKES).
+When a query result is cached, it records which schemas appear in that result.
+On mutation, it looks up all affected cache keys and evicts or updates them.
 
-### Key Reference Tracking
+For a detailed explanation, see the
+[Architecture Guide](guides/explanation/architecture.md).
 
-When a query result is cached via `read/4`, SchemaCache inspects the result to
-find Ecto structs and records two types of references:
+## Using with ElixirCache
 
-1. **Instance references**: maps a specific schema instance (e.g. `User#5`)
-   to every cache key containing it.
-2. **Type references**: maps a schema module (e.g. `User`) to every cache key
-   holding a collection of that type. Used by `create/1` to evict collections
-   that need to include the newly created record.
-
-References are stored as compact integer IDs via `SchemaCache.KeyRegistry`,
-reducing memory usage by approximately 10x compared to storing full cache key
-strings.
-
-```
-                         SMKES: Key Reference Tracking
-  =========================================================================
-
-  SchemaCache.read("find_user", %{id: 5}, ttl, fn -> ... end)
-  SchemaCache.read("all_users", %{active: true}, ttl, fn -> ... end)
-
-                  Cache Storage                     Key Reference Sets
-              +------------------+             +-------------------------+
-              | find_user:{...}  |             | User#5                  |
-              |   => %User{id:5} |      .----->|   => [1, 2]            |
-              +------------------+     /       |   (integer IDs from     |
-                        |             /        |    KeyRegistry)         |
-          cache_key ----+--- sadd ---'         +-------------------------+
-                                               +-------------------------+
-              +------------------+      .----->| User#8                  |
-              | all_users:{...}  |     /       |   => [2]               |
-              |   => [%User{id:5}|    /        +-------------------------+
-              |       %User{id:8}|---'         +-------------------------+
-              |      ]           |- - sadd - ->| User (type)             |
-              +------------------+             |   => [2]               |
-                                               +-------------------------+
-```
-
-### Read Through Flow
-
-```
-  SchemaCache.read("find_user", %{id: 5}, ttl, fn -> Repo.get(User, 5) end)
-
-      +--------+              +-----------+          +----------+
-      | Caller |  -- 1 -->    |SchemaCache|  -- 2 -> | Adapter  |
-      +--------+              +-----------+          +----------+
-          ^                        |                      |
-          |                        |  cache miss (nil)    |
-          |                        | <------- 3 ---------|
-          |                        |                      |
-          |                        | -- 4 -> callback()  --> +------+
-          |                        |                          |  DB  |
-          |                        | <- 5 -- {:ok, user} <-- +------+
-          |                        |                      |
-          |                        | -- 6 -> put(key,     |
-          |                        |          user, ttl)  |
-          |                        |                      |
-          |                        | -- 7 -> sadd(        |
-          |                        |     "User#5",        |
-          |                        |     key_id)          |
-          |                        |                      |
-          | <-- 8 -- {:ok, user}   |                      |
-          |                        |                      |
-
-  Subsequent calls with the same key and params return
-  the cached value at step 3 without invoking the callback.
-```
-
-### Write Through Flow
-
-```
-  SchemaCache.update(fn -> update_user(user, params) end, strategy: :write_through)
-
-      +--------+              +-----------+          +----------+
-      | Caller |  -- 1 -->    |SchemaCache|          | Adapter  |
-      +--------+              +-----------+          +----------+
-          ^                        |                      |
-          |                        | -- 2 -> callback()  --> +------+
-          |                        |                          |  DB  |
-          |                        | <- 3 -- {:ok, updated}  +------+
-          |                        |                      |
-          |                        | -- 4 -> smembers(    |
-          |                        |     "User#5")        |
-          |                        |                      |
-          |                        | <- 5 -- [id1, id2]   |
-          |                        |                      |
-          |                        | -- 6 -> resolve IDs, |
-          |                        |   for each key:      |
-          |                        |   put(key, updated)  |
-          |                        |                      |
-          | <- 7 -- {:ok, updated} |                      |
-          |                        |                      |
-
-  For collection keys (prefixed with "all_"), SchemaCache
-  finds the specific item within the list by primary key
-  and replaces it in place.
-```
-
-### Eviction Flow (default and create)
-
-```
-  SchemaCache.update(fn -> update_user(user, params) end)
-
-      +--------+              +-----------+          +----------+
-      | Caller |  -- 1 -->    |SchemaCache|          | Adapter  |
-      +--------+              +-----------+          +----------+
-          ^                        |                      |
-          |                        | -- 2 -> callback()  --> +------+
-          |                        |                          |  DB  |
-          |                        | <- 3 -- {:ok, updated}  +------+
-          |                        |                      |
-          |                        | -- 4 -> smembers(    |
-          |                        |     "User#5")        |
-          |                        |                      |
-          |                        | <- 5 -- [id1, id2]   |
-          |                        |                      |
-          |                        | -- 6 -> resolve IDs, |
-          |                        |   for each key:      |
-          |                        |   delete(key)        |
-          |                        |   srem("User#5",id)  |
-          |                        |                      |
-          | <- 7 -- {:ok, updated} |                      |
-          |                        |                      |
-
-  create/1 behaves similarly but looks up keys by the
-  schema module name (e.g. "User") instead of the instance
-  identity (e.g. "User#5"), evicting all collections of
-  that type.
-```
-
-## Adapter Configuration
-
-SchemaCache is adapter-agnostic. Any module implementing the
-`SchemaCache.Adapter` behaviour can be used as a backend.
-
-### Built-in: ETS Adapter
-
-A simple single-node adapter backed by ETS. Does not support TTL.
-Suitable for development, testing, and single-node deployments.
+[ElixirCache](https://github.com/MikaAK/elixir_cache) modules work out of the
+box. No wrapper module needed. SchemaCache auto-detects ElixirCache modules and
+translates API signatures automatically:
 
 ```elixir
-config :schema_cache, adapter: SchemaCache.Adapters.ETS
+children = [
+  MyApp.Cache,
+  {SchemaCache.Supervisor, adapter: MyApp.Cache}
+]
 ```
 
-### Custom Adapters
+For Redis-backed ElixirCache modules, SchemaCache also auto-detects native set
+operations via `command/1` with zero configuration. See the
+[ElixirCache Integration Guide](guides/how-to/using_with_elixir_cache.md)
+for details.
 
-Implement the `SchemaCache.Adapter` behaviour with three required callbacks:
-`get/1`, `put/3`, and `delete/1`. SchemaCache builds its key reference
-tracking on top of these primitives, so your adapter only needs basic
-key-value operations.
+## Documentation
 
-Adapters can optionally implement `sadd/2`, `srem/2`, `smembers/1`, and
-`mget/1` for native set operations and batch reads. Adapters without these
-callbacks automatically fall back to a partitioned lock mechanism via
-`SchemaCache.SetLock`.
+- [Introduction](guides/introduction.md)
+- **Tutorials**: [Installation](guides/tutorials/installation.md) | [Basic Operations](guides/tutorials/basic_operations.md)
+- **How-to**: [Writing Adapters](guides/how-to/writing_adapters.md) | [Using with ElixirCache](guides/how-to/using_with_elixir_cache.md)
+- **Explanation**: [Architecture (SMKES)](guides/explanation/architecture.md)
+- [HexDocs](https://hexdocs.pm/schema_cache)
 
-```elixir
-defmodule MyApp.SchemaCacheAdapter do
-  @behaviour SchemaCache.Adapter
+## Contributing
 
-  @impl true
-  def get(key) do
-    case MyApp.Cache.get(key) do
-      nil -> {:ok, nil}
-      value -> {:ok, value}
-    end
-  end
+### Prerequisites
 
-  @impl true
-  def put(key, value, opts) do
-    ttl = Keyword.get(opts, :ttl)
-    MyApp.Cache.put(key, value, ttl: ttl)
-    :ok
-  end
+- Elixir ~> 1.14
+- PostgreSQL (for integration tests)
+- Redis (optional, for Redis adapter tests)
+- Docker (optional, for running services via docker-compose)
 
-  @impl true
-  def delete(key) do
-    MyApp.Cache.delete(key)
-    :ok
-  end
-end
+### Local Setup
+
+```bash
+# Clone the repository
+git clone https://github.com/BobbieBarker/schema_cache.git
+cd schema_cache
+
+# Install dependencies
+mix deps.get
+
+# Create and migrate the test database
+MIX_ENV=test mix ecto.setup
+
+# Run the test suite
+mix test
 ```
 
-Then configure it:
+### Running Redis Tests
 
-```elixir
-config :schema_cache, adapter: MyApp.SchemaCacheAdapter
+Redis adapter tests require a running Redis instance. You can start one with
+docker-compose:
+
+```bash
+docker-compose up -d redis
+mix test
 ```
 
-## Key Conventions
+Tests that require Redis will automatically skip if Redis is not available.
 
-When caching collections, prefix the key with `all_`. This convention is
-required for write-through to correctly identify and update collections in
-the cache versus singular values.
+### Code Quality
 
-```elixir
-# Singular, no prefix
-SchemaCache.read("find_user", %{id: 5}, ttl, fn -> ... end)
+```bash
+# Linting
+mix credo
 
-# Collection, "all_" prefix
-SchemaCache.read("all_users", %{active: true}, ttl, fn -> ... end)
+# Type checking
+mix dialyzer
+
+# Test coverage
+mix coveralls
 ```
 
-## API Reference
+### Pull Requests
 
-Full API documentation is available on [HexDocs](https://hexdocs.pm/schema_cache).
+1. Fork the repository and create your branch from `main`.
+2. Write tests for any new functionality.
+3. Ensure `mix test`, `mix credo`, and `mix dialyzer` pass.
+4. Open a pull request with a clear description of the change.
 
 ## License
 

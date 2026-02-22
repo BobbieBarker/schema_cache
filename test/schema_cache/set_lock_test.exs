@@ -14,7 +14,6 @@ defmodule SchemaCache.SetLockTest do
       :ets.delete_all_objects(:schema_cache_ets)
     end
 
-    Application.put_env(:schema_cache, :adapter, SchemaCache.Adapters.ETS)
     :ok
   end
 
@@ -33,7 +32,7 @@ defmodule SchemaCache.SetLockTest do
       SetLock.sadd("my_set", "member_1", adapter)
 
       assert {:ok, members} = SetLock.smembers("my_set", adapter)
-      assert length(members) == 1
+      assert 1 = length(members)
     end
 
     test "adds multiple different members" do
@@ -43,7 +42,7 @@ defmodule SchemaCache.SetLockTest do
       SetLock.sadd("my_set", "member_3", adapter)
 
       assert {:ok, members} = SetLock.smembers("my_set", adapter)
-      assert length(members) == 3
+      assert 3 = length(members)
       assert "member_1" in members
       assert "member_2" in members
       assert "member_3" in members
@@ -64,7 +63,7 @@ defmodule SchemaCache.SetLockTest do
 
       assert {:ok, members} = SetLock.smembers("concurrent_set", adapter)
       # ALL 50 members should be present -- no lost writes
-      assert length(members) == 50
+      assert 50 = length(members)
     end
   end
 
@@ -97,7 +96,7 @@ defmodule SchemaCache.SetLockTest do
       SetLock.srem("my_set", "nonexistent", adapter)
 
       assert {:ok, members} = SetLock.smembers("my_set", adapter)
-      assert length(members) == 1
+      assert 1 = length(members)
       assert "member_1" in members
     end
 
@@ -122,7 +121,7 @@ defmodule SchemaCache.SetLockTest do
 
       assert {:ok, members} = SetLock.smembers("race_set", adapter)
       # Should have: 25 odd originals + 50 new = 75
-      assert length(members) == 75
+      assert 75 = length(members)
     end
   end
 
@@ -139,7 +138,7 @@ defmodule SchemaCache.SetLockTest do
 
       assert {:ok, members} = SetLock.smembers("my_set", adapter)
       assert is_list(members)
-      assert length(members) == 2
+      assert 2 = length(members)
     end
   end
 

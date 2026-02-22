@@ -9,9 +9,10 @@ config :schema_cache, SchemaCache.Test.Repo,
   pool_size: 10
 
 config :schema_cache,
-  ecto_repos: [SchemaCache.Test.Repo],
-  adapter: SchemaCache.Adapters.ETS
+  ecto_repos: [SchemaCache.Test.Repo]
 
 config :schema_cache, :redis_url, "redis://localhost:6379"
+
+config :schema_cache, :test_elixir_cache_redis_opts, uri: "redis://localhost:6379"
 
 config :logger, level: :warning
