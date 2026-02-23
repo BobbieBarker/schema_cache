@@ -19,12 +19,10 @@ The first call executes the callback and caches the result. Subsequent calls wit
 
 ### Caching a Collection
 
-Prefix collection keys with `"all_"`. This convention is required for write-through to distinguish collections from singular values.
-
 ```elixir
-{:ok, users} =
-  SchemaCache.read("all_active_users", %{active: true}, :timer.minutes(5), fn ->
-    {:ok, MyApp.Users.all(%{active: true})}
+users =
+  SchemaCache.read("users", %{active: true}, :timer.minutes(5), fn ->
+    MyApp.Users.all(%{active: true})
   end)
 ```
 
@@ -96,22 +94,17 @@ The TTL argument is passed to the adapter when re-storing reference sets (if app
 
 ## Key Conventions
 
-Cache keys are composed from two parts: a name and params map. The name determines the cache key prefix, and the params are deterministically serialized into the key.
-
-### The `"all_"` Prefix
-
-Keys prefixed with `"all_"` are treated as collection keys. This distinction matters for:
-
-- **`create/1`**: Only evicts collection keys (prefixed with `"all_"`) for the schema type.
-- **Write-through**: Updates items within lists for collection keys, replaces the entire value for singular keys.
+Cache keys are composed from two parts: a name and params map. The name identifies the domain (e.g. `"users"`, `"jobs"`), and the params are deterministically serialized into the key.
 
 ```elixir
-# Singular (no prefix)
-SchemaCache.read("find_user", %{id: 5}, ttl, fn -> ... end)
+# Singular
+SchemaCache.read("users", %{id: 5}, ttl, fn -> ... end)
 
-# Collection ("all_" prefix required)
-SchemaCache.read("all_users", %{active: true}, ttl, fn -> ... end)
+# Collection
+SchemaCache.read("users", %{active: true}, ttl, fn -> ... end)
 ```
+
+Write-through automatically distinguishes collections from singular values based on the cached data type. No naming convention required.
 
 ### Params Determinism
 

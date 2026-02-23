@@ -34,12 +34,12 @@ defmodule SchemaCacheTest do
     test "fetches from source on cache miss and caches the result" do
       user = make_user(1, "alice")
 
-      result = SchemaCache.read("find_user", %{id: 1}, nil, fn -> {:ok, user} end)
+      result = SchemaCache.read("users", %{id: 1}, nil, fn -> {:ok, user} end)
       assert {:ok, ^user} = result
 
       # Second call should hit cache (function raises if called)
       assert {:ok, ^user} =
-               SchemaCache.read("find_user", %{id: 1}, nil, fn ->
+               SchemaCache.read("users", %{id: 1}, nil, fn ->
                  raise "should not be called"
                end)
     end
@@ -47,12 +47,12 @@ defmodule SchemaCacheTest do
     test "caches and returns list results" do
       users = [make_user(1, "alice"), make_user(2, "bob")]
 
-      result = SchemaCache.read("all_users", %{active: true}, nil, fn -> users end)
+      result = SchemaCache.read("users", %{active: true}, nil, fn -> users end)
       assert ^users = result
 
       # Second call hits cache
       assert ^users =
-               SchemaCache.read("all_users", %{active: true}, nil, fn ->
+               SchemaCache.read("users", %{active: true}, nil, fn ->
                  raise "should not be called"
                end)
     end
@@ -65,8 +65,8 @@ defmodule SchemaCacheTest do
         []
       end
 
-      assert [] = SchemaCache.read("all_users", %{}, nil, fetch)
-      assert [] = SchemaCache.read("all_users", %{}, nil, fetch)
+      assert [] = SchemaCache.read("users", %{}, nil, fetch)
+      assert [] = SchemaCache.read("users", %{}, nil, fetch)
 
       # Function was called twice (not cached)
       assert 2 = :counters.get(call_count, 1)
@@ -75,7 +75,7 @@ defmodule SchemaCacheTest do
     test "passes through error results without caching" do
       error = {:error, :not_found}
 
-      assert ^error = SchemaCache.read("find_user", %{id: 99}, nil, fn -> error end)
+      assert ^error = SchemaCache.read("users", %{id: 99}, nil, fn -> error end)
     end
 
     test "falls back to source when adapter returns an error" do
@@ -95,7 +95,7 @@ defmodule SchemaCacheTest do
       try do
         assert capture_log(fn ->
                  assert {:ok, %{id: 1}} =
-                          SchemaCache.read("find_user", %{id: 1}, nil, fn ->
+                          SchemaCache.read("users", %{id: 1}, nil, fn ->
                             {:ok, make_user(1, "user")}
                           end)
                end) =~ "Unable to fetch from cache, falling back to source"
@@ -108,13 +108,13 @@ defmodule SchemaCacheTest do
       user = make_user(1, "alice")
       schema_key = KeyGenerator.schema_cache_key(user)
 
-      SchemaCache.read("find_user", %{id: 1}, nil, fn -> {:ok, user} end)
+      SchemaCache.read("users", %{id: 1}, nil, fn -> {:ok, user} end)
 
       adapter = SchemaCache.Adapters.ETS
       set_key = "__set:#{schema_key}"
       {:ok, refs} = adapter.smembers(set_key)
 
-      cache_key = KeyGenerator.cache_key("find_user", %{id: 1})
+      cache_key = KeyGenerator.cache_key("users", %{id: 1})
       expected_id = KeyRegistry.register(cache_key)
       assert expected_id in refs
     end
@@ -122,10 +122,10 @@ defmodule SchemaCacheTest do
     test "creates key references for collection results and schema type" do
       users = [make_user(1, "alice"), make_user(2, "bob")]
 
-      SchemaCache.read("all_users", %{active: true}, nil, fn -> users end)
+      SchemaCache.read("users", %{active: true}, nil, fn -> users end)
 
       adapter = SchemaCache.Adapters.ETS
-      cache_key = KeyGenerator.cache_key("all_users", %{active: true})
+      cache_key = KeyGenerator.cache_key("users", %{active: true})
       expected_id = KeyRegistry.register(cache_key)
 
       # Each user should have a key reference
@@ -158,12 +158,12 @@ defmodule SchemaCacheTest do
                  id: ^user_id,
                  name: ^user_name
                }
-             } = SchemaCache.read("find_user", %{id: user.id}, nil, fetch)
+             } = SchemaCache.read("users", %{id: user.id}, nil, fetch)
 
       assert 1 = :counters.get(call_count, 1)
 
       assert {:ok, %{id: ^user_id}} =
-               SchemaCache.read("find_user", %{id: user.id}, nil, fetch)
+               SchemaCache.read("users", %{id: user.id}, nil, fetch)
 
       assert 1 = :counters.get(call_count, 1)
     end
@@ -178,10 +178,10 @@ defmodule SchemaCacheTest do
         Repo.all(User)
       end
 
-      assert [_, _] = SchemaCache.read("all_users", %{}, nil, fetch)
+      assert [_, _] = SchemaCache.read("users", %{}, nil, fetch)
       assert 1 = :counters.get(call_count, 1)
 
-      result = SchemaCache.read("all_users", %{}, nil, fetch)
+      result = SchemaCache.read("users", %{}, nil, fetch)
       ids = Enum.map(result, & &1.id)
       assert user1.id in ids
       assert user2.id in ids
@@ -213,7 +213,7 @@ defmodule SchemaCacheTest do
       tasks =
         for user <- users do
           Task.async(fn ->
-            SchemaCache.read("find_user", %{id: user.id}, nil, fn -> {:ok, user} end)
+            SchemaCache.read("users", %{id: user.id}, nil, fn -> {:ok, user} end)
           end)
         end
 
@@ -223,7 +223,7 @@ defmodule SchemaCacheTest do
 
       for user <- users do
         schema_key = KeyGenerator.schema_cache_key(user)
-        expected_cache_key = KeyGenerator.cache_key("find_user", %{id: user.id})
+        expected_cache_key = KeyGenerator.cache_key("users", %{id: user.id})
         expected_id = SchemaCache.KeyRegistry.register(expected_cache_key)
         {:ok, refs} = adapter.smembers("__set:#{schema_key}")
         assert expected_id in refs
@@ -237,7 +237,7 @@ defmodule SchemaCacheTest do
         for i <- 1..10 do
           Task.async(fn ->
             user = make_user(i, "reader_#{i}")
-            SchemaCache.read("find_user", %{id: i}, nil, fn -> {:ok, user} end)
+            SchemaCache.read("users", %{id: i}, nil, fn -> {:ok, user} end)
           end)
         end ++
           for i <- 11..15 do
@@ -251,19 +251,19 @@ defmodule SchemaCacheTest do
       assert 15 = length(results)
 
       for i <- 1..10 do
-        cache_key = KeyGenerator.cache_key("find_user", %{id: i})
+        cache_key = KeyGenerator.cache_key("users", %{id: i})
         assert {:ok, %{id: ^i}} = adapter.get(cache_key)
       end
     end
 
     test "concurrent reads and mutations don't corrupt state" do
       user = make_user(1, "alice")
-      SchemaCache.read("find_user", %{id: 1}, nil, fn -> {:ok, user} end)
+      SchemaCache.read("users", %{id: 1}, nil, fn -> {:ok, user} end)
 
       tasks =
         for _ <- 1..20 do
           Task.async(fn ->
-            SchemaCache.read("find_user", %{id: 1}, nil, fn -> {:ok, user} end)
+            SchemaCache.read("users", %{id: 1}, nil, fn -> {:ok, user} end)
           end)
         end ++
           for i <- 1..5 do
@@ -279,12 +279,12 @@ defmodule SchemaCacheTest do
 
     test "concurrent reads and write_through updates don't corrupt state" do
       user = make_user(1, "alice")
-      SchemaCache.read("find_user", %{id: 1}, nil, fn -> {:ok, user} end)
+      SchemaCache.read("users", %{id: 1}, nil, fn -> {:ok, user} end)
 
       tasks =
         for _ <- 1..20 do
           Task.async(fn ->
-            SchemaCache.read("find_user", %{id: 1}, nil, fn -> {:ok, user} end)
+            SchemaCache.read("users", %{id: 1}, nil, fn -> {:ok, user} end)
           end)
         end ++
           for i <- 1..5 do
@@ -302,8 +302,8 @@ defmodule SchemaCacheTest do
   describe "create/1" do
     test "evicts all collection cache keys for the schema type" do
       user = make_user(1, "alice")
-      all_key = KeyGenerator.cache_key("all_users", %{active: true})
-      find_key = KeyGenerator.cache_key("find_user", %{id: 1})
+      all_key = KeyGenerator.cache_key("users", %{active: true})
+      find_key = KeyGenerator.cache_key("users", %{id: 1})
 
       adapter = SchemaCache.Adapters.ETS
 
@@ -337,7 +337,7 @@ defmodule SchemaCacheTest do
     test "evicts collection cache so next read includes new record" do
       user1 = insert_user!(%{name: "alice", email: "alice@test.com"})
 
-      SchemaCache.read("all_users", %{}, nil, fn -> Repo.all(User) end)
+      SchemaCache.read("users", %{}, nil, fn -> Repo.all(User) end)
 
       assert {:ok, user2} =
                SchemaCache.create(fn ->
@@ -349,7 +349,7 @@ defmodule SchemaCacheTest do
       call_count = :counters.new(1, [:atomics])
 
       result =
-        SchemaCache.read("all_users", %{}, nil, fn ->
+        SchemaCache.read("users", %{}, nil, fn ->
           :counters.add(call_count, 1, 1)
           Repo.all(User)
         end)
@@ -364,7 +364,7 @@ defmodule SchemaCacheTest do
       existing_user = make_user(1, "alice")
       adapter = SchemaCache.Adapters.ETS
 
-      SchemaCache.read("all_users", %{}, nil, fn -> [existing_user] end)
+      SchemaCache.read("users", %{}, nil, fn -> [existing_user] end)
 
       tasks =
         for i <- 2..11 do
@@ -376,7 +376,7 @@ defmodule SchemaCacheTest do
 
       Task.await_many(tasks)
 
-      assert {:ok, nil} = adapter.get(KeyGenerator.cache_key("all_users", %{}))
+      assert {:ok, nil} = adapter.get(KeyGenerator.cache_key("users", %{}))
     end
   end
 
@@ -384,8 +384,8 @@ defmodule SchemaCacheTest do
     test "evicts all cache keys referencing the mutated schema" do
       user = make_user(1, "alice")
       schema_key = KeyGenerator.schema_cache_key(user)
-      find_key = KeyGenerator.cache_key("find_user", %{id: 1})
-      all_key = KeyGenerator.cache_key("all_users", %{active: true})
+      find_key = KeyGenerator.cache_key("users", %{id: 1})
+      all_key = KeyGenerator.cache_key("users", %{active: true})
 
       adapter = SchemaCache.Adapters.ETS
 
@@ -415,7 +415,7 @@ defmodule SchemaCacheTest do
     test "write_through updates cached singular values in place" do
       user = make_user(1, "alice")
       schema_key = KeyGenerator.schema_cache_key(user)
-      find_key = KeyGenerator.cache_key("find_user", %{id: 1})
+      find_key = KeyGenerator.cache_key("users", %{id: 1})
 
       adapter = SchemaCache.Adapters.ETS
 
@@ -433,7 +433,7 @@ defmodule SchemaCacheTest do
     test "write_through updates cached collections in place" do
       user = make_user(1, "alice")
       schema_key = KeyGenerator.schema_cache_key(user)
-      all_key = KeyGenerator.cache_key("all_users", %{active: true})
+      all_key = KeyGenerator.cache_key("users", %{active: true})
 
       adapter = SchemaCache.Adapters.ETS
 
@@ -458,7 +458,7 @@ defmodule SchemaCacheTest do
       user = insert_user!(%{name: "alice", email: "alice@test.com"})
 
       {:ok, _} =
-        SchemaCache.read("find_user", %{id: user.id}, nil, fn ->
+        SchemaCache.read("users", %{id: user.id}, nil, fn ->
           {:ok, Repo.get(User, user.id)}
         end)
 
@@ -472,7 +472,7 @@ defmodule SchemaCacheTest do
       call_count = :counters.new(1, [:atomics])
 
       assert {:ok, %{name: "alice_updated"}} =
-               SchemaCache.read("find_user", %{id: user.id}, nil, fn ->
+               SchemaCache.read("users", %{id: user.id}, nil, fn ->
                  :counters.add(call_count, 1, 1)
                  {:ok, Repo.get(User, user.id)}
                end)
@@ -484,7 +484,7 @@ defmodule SchemaCacheTest do
       user = insert_user!(%{name: "alice", email: "alice@test.com"})
 
       {:ok, _} =
-        SchemaCache.read("find_user", %{id: user.id}, nil, fn ->
+        SchemaCache.read("users", %{id: user.id}, nil, fn ->
           {:ok, Repo.get(User, user.id)}
         end)
 
@@ -501,7 +501,7 @@ defmodule SchemaCacheTest do
       call_count = :counters.new(1, [:atomics])
 
       assert {:ok, %{name: "alice_updated"}} =
-               SchemaCache.read("find_user", %{id: user.id}, nil, fn ->
+               SchemaCache.read("users", %{id: user.id}, nil, fn ->
                  :counters.add(call_count, 1, 1)
                  {:ok, Repo.get(User, user.id)}
                end)
@@ -512,7 +512,7 @@ defmodule SchemaCacheTest do
     test "write_through collection updates cache in place" do
       user = insert_user!(%{name: "alice", email: "alice@test.com"})
 
-      SchemaCache.read("all_users", %{}, nil, fn -> Repo.all(User) end)
+      SchemaCache.read("users", %{}, nil, fn -> Repo.all(User) end)
 
       assert {:ok, %{name: "alice_updated"}} =
                SchemaCache.update(
@@ -527,7 +527,7 @@ defmodule SchemaCacheTest do
       call_count = :counters.new(1, [:atomics])
 
       assert [%{name: "alice_updated"}] =
-               SchemaCache.read("all_users", %{}, nil, fn ->
+               SchemaCache.read("users", %{}, nil, fn ->
                  :counters.add(call_count, 1, 1)
                  Repo.all(User)
                end)
@@ -539,7 +539,7 @@ defmodule SchemaCacheTest do
       users = for i <- 1..10, do: make_user(i, "user_#{i}")
       adapter = SchemaCache.Adapters.ETS
 
-      SchemaCache.read("all_users", %{}, nil, fn -> users end)
+      SchemaCache.read("users", %{}, nil, fn -> users end)
 
       tasks =
         for user <- users do
@@ -551,7 +551,7 @@ defmodule SchemaCacheTest do
 
       Task.await_many(tasks)
 
-      assert {:ok, nil} = adapter.get(KeyGenerator.cache_key("all_users", %{}))
+      assert {:ok, nil} = adapter.get(KeyGenerator.cache_key("users", %{}))
     end
   end
 
@@ -559,8 +559,8 @@ defmodule SchemaCacheTest do
     test "evicts all cache keys referencing the deleted schema" do
       user = make_user(1, "alice")
       schema_key = KeyGenerator.schema_cache_key(user)
-      find_key = KeyGenerator.cache_key("find_user", %{id: 1})
-      all_key = KeyGenerator.cache_key("all_users", %{active: true})
+      find_key = KeyGenerator.cache_key("users", %{id: 1})
+      all_key = KeyGenerator.cache_key("users", %{active: true})
       adapter = SchemaCache.Adapters.ETS
 
       adapter.put(find_key, user, [])
@@ -585,11 +585,11 @@ defmodule SchemaCacheTest do
       user = insert_user!(%{name: "alice", email: "alice@test.com"})
 
       {:ok, _} =
-        SchemaCache.read("find_user", %{id: user.id}, nil, fn ->
+        SchemaCache.read("users", %{id: user.id}, nil, fn ->
           {:ok, Repo.get(User, user.id)}
         end)
 
-      SchemaCache.read("all_users", %{}, nil, fn -> Repo.all(User) end)
+      SchemaCache.read("users", %{}, nil, fn -> Repo.all(User) end)
 
       user_id = user.id
 
@@ -601,7 +601,7 @@ defmodule SchemaCacheTest do
       call_count = :counters.new(1, [:atomics])
 
       assert {:ok, nil} =
-               SchemaCache.read("find_user", %{id: user.id}, nil, fn ->
+               SchemaCache.read("users", %{id: user.id}, nil, fn ->
                  :counters.add(call_count, 1, 1)
                  {:ok, Repo.get(User, user.id)}
                end)
@@ -614,7 +614,7 @@ defmodule SchemaCacheTest do
       adapter = SchemaCache.Adapters.ETS
 
       for user <- users do
-        SchemaCache.read("find_user", %{id: user.id}, nil, fn -> {:ok, user} end)
+        SchemaCache.read("users", %{id: user.id}, nil, fn -> {:ok, user} end)
       end
 
       tasks =
@@ -627,7 +627,7 @@ defmodule SchemaCacheTest do
       Task.await_many(tasks)
 
       for user <- users do
-        cache_key = KeyGenerator.cache_key("find_user", %{id: user.id})
+        cache_key = KeyGenerator.cache_key("users", %{id: user.id})
         assert {:ok, nil} = adapter.get(cache_key)
       end
     end
@@ -722,9 +722,9 @@ defmodule SchemaCacheTest do
 
       # Cache the value via read/4 to create cache entry + key references
       {:ok, ^user} =
-        SchemaCache.read("find_user_stale", %{id: 1}, nil, fn -> {:ok, user} end)
+        SchemaCache.read("users_stale", %{id: 1}, nil, fn -> {:ok, user} end)
 
-      cache_key = KeyGenerator.cache_key("find_user_stale", %{id: 1})
+      cache_key = KeyGenerator.cache_key("users_stale", %{id: 1})
       schema_key = KeyGenerator.schema_cache_key(user)
       set_key = "__set:#{schema_key}"
 
@@ -793,23 +793,23 @@ defmodule SchemaCacheTest do
       user = insert_user!(%{name: "alice", email: "alice@test.com"})
 
       {:ok, _} =
-        SchemaCache.read("find_user", %{id: user.id}, nil, fn ->
+        SchemaCache.read("users", %{id: user.id}, nil, fn ->
           {:ok, Repo.get(User, user.id)}
         end)
 
-      SchemaCache.read("all_users", %{}, nil, fn -> Repo.all(User) end)
+      SchemaCache.read("users", %{}, nil, fn -> Repo.all(User) end)
 
       :ok = SchemaCache.flush(user)
 
       call_count = :counters.new(1, [:atomics])
 
       {:ok, _} =
-        SchemaCache.read("find_user", %{id: user.id}, nil, fn ->
+        SchemaCache.read("users", %{id: user.id}, nil, fn ->
           :counters.add(call_count, 1, 1)
           {:ok, Repo.get(User, user.id)}
         end)
 
-      SchemaCache.read("all_users", %{}, nil, fn ->
+      SchemaCache.read("users", %{}, nil, fn ->
         :counters.add(call_count, 1, 1)
         Repo.all(User)
       end)
@@ -822,8 +822,8 @@ defmodule SchemaCacheTest do
     test "updates all key ref values directly" do
       user = make_user(1, "alice")
       schema_key = KeyGenerator.schema_cache_key(user)
-      find_key = KeyGenerator.cache_key("find_user", %{id: 1})
-      all_key = KeyGenerator.cache_key("all_users", %{active: true})
+      find_key = KeyGenerator.cache_key("users", %{id: 1})
+      all_key = KeyGenerator.cache_key("users", %{active: true})
 
       adapter = SchemaCache.Adapters.ETS
 
@@ -852,9 +852,9 @@ defmodule SchemaCacheTest do
 
       # Cache the value via read/4
       {:ok, ^user} =
-        SchemaCache.read("find_user_wt", %{id: 1}, nil, fn -> {:ok, user} end)
+        SchemaCache.read("users_wt", %{id: 1}, nil, fn -> {:ok, user} end)
 
-      cache_key = KeyGenerator.cache_key("find_user_wt", %{id: 1})
+      cache_key = KeyGenerator.cache_key("users_wt", %{id: 1})
       schema_key = KeyGenerator.schema_cache_key(user)
       set_key = "__set:#{schema_key}"
 
@@ -884,7 +884,7 @@ defmodule SchemaCacheTest do
       user = insert_user!(%{name: "alice", email: "alice@test.com"})
 
       {:ok, _} =
-        SchemaCache.read("find_user", %{id: user.id}, nil, fn ->
+        SchemaCache.read("users", %{id: user.id}, nil, fn ->
           {:ok, Repo.get(User, user.id)}
         end)
 
@@ -892,7 +892,7 @@ defmodule SchemaCacheTest do
       :ok = SchemaCache.write_to_cache(modified)
 
       assert {:ok, %{name: "cache_only_name"}} =
-               SchemaCache.read("find_user", %{id: user.id}, nil, fn ->
+               SchemaCache.read("users", %{id: user.id}, nil, fn ->
                  {:ok, Repo.get(User, user.id)}
                end)
 
@@ -907,18 +907,18 @@ defmodule SchemaCacheTest do
 
     # Step 1: Cache a user via read/4 as singular
     {:ok, ^user} =
-      SchemaCache.read("find_user", %{id: 1}, nil, fn -> {:ok, user} end)
+      SchemaCache.read("users", %{id: 1}, nil, fn -> {:ok, user} end)
 
-    find_key = KeyGenerator.cache_key("find_user", %{id: 1})
+    find_key = KeyGenerator.cache_key("users", %{id: 1})
     assert {:ok, ^user} = adapter.get(find_key)
 
     # Step 2: Cache a user list via read/4 as collection
     users = [user, make_user(2, "bob")]
 
     ^users =
-      SchemaCache.read("all_users", %{active: true}, nil, fn -> users end)
+      SchemaCache.read("users", %{active: true}, nil, fn -> users end)
 
-    all_key = KeyGenerator.cache_key("all_users", %{active: true})
+    all_key = KeyGenerator.cache_key("users", %{active: true})
     assert {:ok, ^users} = adapter.get(all_key)
 
     # Step 3: Create a new user - verify collection cache is evicted
@@ -935,7 +935,7 @@ defmodule SchemaCacheTest do
     updated_users = [user, make_user(2, "bob"), new_user]
 
     ^updated_users =
-      SchemaCache.read("all_users", %{active: true}, nil, fn -> updated_users end)
+      SchemaCache.read("users", %{active: true}, nil, fn -> updated_users end)
 
     assert {:ok, ^updated_users} = adapter.get(all_key)
 
@@ -965,7 +965,7 @@ defmodule SchemaCacheTest do
 
     # Step 7: Re-cache the singular entry for delete test
     {:ok, ^evicted_user} =
-      SchemaCache.read("find_user", %{id: 1}, nil, fn -> {:ok, evicted_user} end)
+      SchemaCache.read("users", %{id: 1}, nil, fn -> {:ok, evicted_user} end)
 
     assert {:ok, ^evicted_user} = adapter.get(find_key)
 

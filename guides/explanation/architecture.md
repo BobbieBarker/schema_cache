@@ -98,9 +98,9 @@ SchemaCache.update(fn -> update_user(user, params) end, strategy: :write_through
         | <- 7 -- {:ok, updated} |                      |
         |                        |                      |
 
-For collection keys (prefixed with "all_"), SchemaCache
-finds the specific item within the list by primary key
-and replaces it in place.
+For collections (detected by the cached value being a list),
+SchemaCache finds the specific item within the list by
+primary key and replaces it in place.
 ```
 
 ## Eviction Flow

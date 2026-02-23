@@ -8,17 +8,17 @@ defmodule SchemaCache.KeyGeneratorTest do
 
   describe "cache_key/2" do
     test "generates a key from prefix and params" do
-      assert "find_user:{\"id\":5}" = KeyGenerator.cache_key("find_user", %{id: 5})
+      assert "users:{\"id\":5}" = KeyGenerator.cache_key("users", %{id: 5})
     end
 
     test "converts order_by keyword list to map for encoding" do
-      key = KeyGenerator.cache_key("all_users", %{order_by: [name: :asc]})
+      key = KeyGenerator.cache_key("users", %{order_by: [name: :asc]})
       assert key =~ "order_by"
       assert key =~ "name"
     end
 
     test "handles empty params" do
-      assert "all_users:{}" = KeyGenerator.cache_key("all_users", %{})
+      assert "users:{}" = KeyGenerator.cache_key("users", %{})
     end
   end
 
