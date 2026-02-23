@@ -50,10 +50,10 @@ caches the result, and records which schemas appear in it for later eviction.
     MyApp.Users.find(%{id: 5})
   end)
 
-# Cache a collection (prefix with "all_" for write-through support)
-{:ok, users} =
-  SchemaCache.read("all_active_users", %{active: true}, :timer.minutes(5), fn ->
-    {:ok, MyApp.Users.all(%{active: true})}
+# Cache a collection
+users =
+  SchemaCache.read("users", %{active: true}, :timer.minutes(5), fn ->
+    MyApp.Users.all(%{active: true})
   end)
 ```
 

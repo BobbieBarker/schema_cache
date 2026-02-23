@@ -280,25 +280,17 @@ defmodule SchemaCache do
     end
   end
 
-  defp update_key_ref(
-         "all_" <> _ = key_ref,
-         ttl,
-         %_{} = value
-       ) do
+  defp update_key_ref(key_ref, ttl, value) do
     case Adapter.get(adapter(), key_ref) do
       {:ok, nil} ->
         :ok
 
-      {:ok, cached_collection} when is_list(cached_collection) ->
-        maybe_update_cached_collection(cached_collection, key_ref, ttl, value)
+      {:ok, cached} when is_list(cached) ->
+        maybe_update_cached_collection(cached, key_ref, ttl, value)
 
-      _ ->
-        :ok
+      {:ok, _singular} ->
+        Adapter.put(adapter(), key_ref, value, ttl)
     end
-  end
-
-  defp update_key_ref(key_ref, ttl, value) do
-    Adapter.put(adapter(), key_ref, value, ttl)
   end
 
   defp maybe_update_cached_collection(
@@ -350,9 +342,8 @@ defmodule SchemaCache do
 
   ## Arguments
 
-    * `key` - A string prefix identifying the query. Use `"all_"` prefix
-      for collections so write-through can distinguish them from singular
-      values.
+    * `key` - A string prefix identifying the query (e.g. `"users"`,
+      `"jobs"`). Combined with `params` to form the full cache key.
     * `params` - A map of query parameters. Combined with `key` to form
       the full cache key.
     * `ttl` - Time-to-live passed through to the adapter. Pass `nil` to
@@ -375,13 +366,13 @@ defmodule SchemaCache do
 
       # Singular record
       {:ok, user} =
-        SchemaCache.read("find_user", %{id: 5}, :timer.minutes(15), fn ->
+        SchemaCache.read("users", %{id: 5}, :timer.minutes(15), fn ->
           MyApp.Users.find(%{id: 5})
         end)
 
       # Collection
       users =
-        SchemaCache.read("all_users", %{active: true}, :timer.minutes(5), fn ->
+        SchemaCache.read("users", %{active: true}, :timer.minutes(5), fn ->
           MyApp.Users.all(%{active: true})
         end)
   """

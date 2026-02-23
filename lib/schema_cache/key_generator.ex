@@ -29,14 +29,14 @@ defmodule SchemaCache.KeyGenerator do
 
   ## Examples
 
-      iex> SchemaCache.KeyGenerator.cache_key("find_user", %{id: 5})
-      "find_user:{\"id\":5}"
+      iex> SchemaCache.KeyGenerator.cache_key("users", %{id: 5})
+      "users:{\"id\":5}"
 
       iex> SchemaCache.KeyGenerator.cache_key("foo", %{order_by: [fiz: "buz"]})
       "foo:{\"order_by\":{\"fiz\":\"buz\"}}"
 
-      iex> SchemaCache.KeyGenerator.cache_key("all_users", %{})
-      "all_users:{}"
+      iex> SchemaCache.KeyGenerator.cache_key("users", %{})
+      "users:{}"
 
   """
   @spec cache_key(String.t(), map()) :: String.t()
