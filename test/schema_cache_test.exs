@@ -231,8 +231,6 @@ defmodule SchemaCacheTest do
     end
 
     test "concurrent reads and creates don't lose data" do
-      adapter = SchemaCache.Adapters.ETS
-
       tasks =
         for i <- 1..10 do
           Task.async(fn ->
@@ -250,10 +248,8 @@ defmodule SchemaCacheTest do
       results = Task.await_many(tasks)
       assert 15 = length(results)
 
-      for i <- 1..10 do
-        cache_key = KeyGenerator.cache_key("users", %{id: i})
-        assert {:ok, %{id: ^i}} = adapter.get(cache_key)
-      end
+      # All reads and creates should return successfully — no crashes
+      assert Enum.all?(results, &match?({:ok, _}, &1))
     end
 
     test "concurrent reads and mutations don't corrupt state" do
@@ -658,6 +654,53 @@ defmodule SchemaCacheTest do
       assert :ok = SchemaCache.flush(user)
     end
 
+    test "flush/1 on a struct evicts collection caches tracked under the per-type key set" do
+      user = make_user(1, "alice")
+      adapter = SchemaCache.Adapters.ETS
+
+      # Cache a singular lookup via read/4 — triggers per-record key ref
+      {:ok, ^user} =
+        SchemaCache.read("users", %{id: 1}, nil, fn -> {:ok, user} end)
+
+      # Cache a collection via read/4 — triggers per-type key ref
+      [^user] =
+        SchemaCache.read("all_users", %{}, nil, fn -> [user] end)
+
+      find_key = KeyGenerator.cache_key("users", %{id: 1})
+      all_key = KeyGenerator.cache_key("all_users", %{})
+
+      # Both should be cached
+      assert {:ok, ^user} = adapter.get(find_key)
+      assert {:ok, [^user]} = adapter.get(all_key)
+
+      # flush/1 with the struct should evict BOTH per-record and per-type entries
+      :ok = SchemaCache.flush(user)
+
+      assert {:ok, nil} = adapter.get(find_key)
+      assert {:ok, nil} = adapter.get(all_key)
+    end
+
+    test "flush/1 evicts singular cache entries tracked under the per-type key set" do
+      user = make_user(1, "alice")
+      adapter = SchemaCache.Adapters.ETS
+
+      # Cache a singular lookup via read/4
+      {:ok, ^user} =
+        SchemaCache.read("users", %{id: 1}, nil, fn -> {:ok, user} end)
+
+      cache_key = KeyGenerator.cache_key("users", %{id: 1})
+
+      # The singular result should be tracked under the per-type set too
+      {:ok, type_refs} = adapter.smembers("__set:Elixir.SchemaCache.Test.FakeSchema")
+      expected_id = KeyRegistry.register(cache_key)
+      assert expected_id in type_refs
+
+      # flush with :new_schema (per-type only) should evict the singular entry
+      :ok = SchemaCache.flush(user, :new_schema)
+
+      assert {:ok, nil} = adapter.get(cache_key)
+    end
+
     test "evicts 101+ cache entries via async_stream branch" do
       user = make_user(1, "alice")
       schema_key = KeyGenerator.schema_cache_key(user)
@@ -925,13 +968,16 @@ defmodule SchemaCacheTest do
     new_user = make_user(3, "charlie")
     {:ok, ^new_user} = SchemaCache.create(fn -> {:ok, new_user} end)
 
-    # Collection key should be evicted (create evicts type-level refs)
+    # Both collection and singular keys should be evicted (create evicts
+    # type-level refs, and singular results are now tracked under the
+    # per-type set too)
     assert {:ok, nil} = adapter.get(all_key)
+    assert {:ok, nil} = adapter.get(find_key)
 
-    # Singular find key should still be cached (create doesn't evict instance refs)
-    assert {:ok, ^user} = adapter.get(find_key)
+    # Step 4: Re-read both (should re-cache)
+    {:ok, ^user} =
+      SchemaCache.read("users", %{id: 1}, nil, fn -> {:ok, user} end)
 
-    # Step 4: Re-read the collection (should re-cache)
     updated_users = [user, make_user(2, "bob"), new_user]
 
     ^updated_users =

@@ -400,6 +400,7 @@ defmodule SchemaCache do
       {:ok, value} ->
         Adapter.put(adapter(), cache_key, value, ttl)
         associate_key_reference_with_schema(cache_key, value)
+        associate_key_reference_with_schema_type(cache_key, value)
         {:ok, value}
 
       [] ->
@@ -438,17 +439,19 @@ defmodule SchemaCache do
   ## Behaviors
 
     * `flush(schema)`: evicts all cache keys referencing the specific
-      schema instance, identified by its module and primary key values.
-    * `flush(schema, :new_schema)`: evicts all cached collections for
+      schema instance (per-record set) **and** all cached collections
+      for the schema's module type (per-type set). This ensures both
+      singular lookups and collection queries are invalidated.
+    * `flush(schema, :new_schema)`: evicts only cached collections for
       the schema's module type. Use when a new record has been created
-      outside of `create/1`.
+      outside of `create/1` and you don't need per-record eviction.
 
   ## Examples
 
-      # Evict all cache entries referencing a specific user
+      # Evict all cache entries for a specific user (both per-record and per-type)
       :ok = SchemaCache.flush(user)
 
-      # Evict all cached User collections (e.g. after an external insert)
+      # Evict only cached User collections (e.g. after an external insert)
       :ok = SchemaCache.flush(user, :new_schema)
   """
   @spec flush(struct(), nil | atom()) :: :ok
@@ -458,10 +461,12 @@ defmodule SchemaCache do
     evict_reference_keys("#{schema_type}")
   end
 
-  def flush(%_{} = schema, _opts) do
+  def flush(%schema_type{} = schema, _opts) do
     schema
     |> KeyGenerator.schema_cache_key()
     |> evict_reference_keys()
+
+    evict_reference_keys("#{schema_type}")
   end
 
   defp evict_reference_keys(key) do
@@ -523,6 +528,19 @@ defmodule SchemaCache do
          [%resource_type{} | _] = value
        )
        when is_list(value) do
+    cache_key
+    |> KeyRegistry.register()
+    |> then(
+      &Adapter.sadd(
+        adapter(),
+        set_key("#{resource_type}"),
+        &1
+      )
+    )
+  end
+
+  defp associate_key_reference_with_schema_type(cache_key, %resource_type{})
+       when is_atom(resource_type) do
     cache_key
     |> KeyRegistry.register()
     |> then(
