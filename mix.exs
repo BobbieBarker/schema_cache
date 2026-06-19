@@ -57,7 +57,8 @@ defmodule SchemaCache.MixProject do
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
       {:excoveralls, "~> 0.18", only: :test},
       {:redix, "~> 1.5", only: :test},
-      {:elixir_cache, "~> 0.3", only: :test}
+      {:elixir_cache,
+       github: "BobbieBarker/elixir_cache", branch: "chore/elixir-1.20-upgrade", only: :test}
     ]
   end
 
